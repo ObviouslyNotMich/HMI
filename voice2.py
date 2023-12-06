@@ -55,7 +55,7 @@ def calculate_wer(ref_words, hyp_words):
 	wer = (substitutions + deletions + insertions) / total_words
 	return wer
 
-# Wer calculation that way more accurate acording to python book
+# Wer calculation that way more accurate acording to python book and numpy website
 def calculate_wer2(ref_words, hyp_words):
     # Initialize a matrix with size |ref_words|+1 x |hyp_words|+1
     # The extra row and column are for the case when one of the strings is empty
