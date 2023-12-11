@@ -105,7 +105,7 @@ def align_texts(reference, hypothesis):
     hypothesis_words = hypothesis.split()
 
     dp = [[0] * (len(hypothesis_words) + 1) for _ in range(len(reference_words) + 1)]
-
+    # Based on  Wagner-Fischer algorithm
     for i in range(len(reference_words) + 1):
         for j in range(len(hypothesis_words) + 1):
             if i == 0:
