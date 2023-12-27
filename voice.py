@@ -9,17 +9,22 @@
 import os
 import re
 import time
-
-os.environ['HF_HUB_DISABLE_SYMLINKS'] = '1'
-current_directory = os.path.dirname(__file__)
-
 import torch
 import torchaudio
 from pydub import AudioSegment
 
+import pandas as pd
 import numpy as np
+from collections import Counter
 
 from speechbrain.pretrained import EncoderDecoderASR
+
+os.environ['HF_HUB_DISABLE_SYMLINKS'] = '1'
+current_directory = os.path.dirname(__file__)
+folder_name = 'audio'
+
+# Load ground truth from a .excel file
+reference_file = "speechrecognition dataset details.xlsx"  
 
 def levenshtein_distance(s1, s2):
     if len(s1) < len(s2):
@@ -97,6 +102,18 @@ def preprocess(text):
     return text
 
 def align_texts(reference, hypothesis):
+
+    """
+    Check the hypothesis and reference and then align the texts so that the wer can be calculated
+
+    Args:
+    hypothesis (list): The predicted words.
+    reference (list): The ground truth words.
+
+    Returns:
+    tuple: (align_ref, align_hyp)
+    """
+
     # Normalize reference and hypothesis texts
     reference = preprocess(reference)
     hypothesis = preprocess(hypothesis)
@@ -140,126 +157,212 @@ def align_texts(reference, hypothesis):
 
     return align_ref, align_hyp
 
+def load_wav_files_from_folder(folder_path):
+    """
+    Function to load all .wav files from a specified folder.
 
+    Args:
+    folder_path (str): Path to the folder containing the .wav files.
 
-# Load ground truth from a .txt file
-reference_file = "trans.txt"  # Replace with your ground truth .txt file path
+    Returns:
+    list: A list of .wav file names found in the folder.
+    """
+    wav_files = []
 
-reference_file = os.path.join(current_directory, reference_file)
+    # Iterate over files in the specified folder
+    for file in os.listdir(folder_path):
+        # Check if the file is a .wav file
+        if file.endswith(".wav"):
+            wav_files.append(file)
 
-with open(reference_file, "r") as file:
-    reference = file.read()
+    return wav_files
 
-# Define the folder name where the audio file is located
-folder_name = 'audio'
+def load_transcriptions_from_excel(excel_path):
+    """
+    Function to load transcription ground truths from an Excel file.
 
-# Define the file name of the audio file
-file_name = 'audio.mp3'
+    Args:
+    excel_path (str): Path to the Excel file.
 
-# Construct the file path
-file_path = os.path.join(current_directory, folder_name, file_name)
+    Returns:
+    DataFrame: A pandas DataFrame containing the transcriptions with 'ID' and 'Sentence' columns.
+    """
+    # Read the Excel file into a DataFrame
+    try:
+        df = pd.read_excel(excel_path, usecols=['ID', 'Sentence'])
 
-# Check if the file is mp3
-if file_path.endswith('.mp3'):
-    # Convert mp3 to wav
-    audio = AudioSegment.from_mp3(file_path)
-    # Change the file path to wav
-    file_path = file_path.replace('.mp3', '.wav')
-    # Export as wav
-    audio.export(file_path, format='wav')
+        # Cleaning the DataFrame to remove unnecessary columns
+        df = df[['ID', 'Sentence']].dropna()
 
-# Load file in wav since we are windows
-waveform, sample_rate = torchaudio.load(file_path)
+        return df
+    except Exception as e:
+        return f"An error occurred: {e}"
 
-# Run speech recognition on GPU
-run_opts={"device":"cuda"}
+def select_transcription_for_audio_file(audio_file, transcriptions_df):
+    """
+    Function to select the correct transcription for a given audio file based on the task number in the file name.
 
-# Initialize the speech recognition model
-asr_model = EncoderDecoderASR.from_hparams(source="speechbrain/asr-transformer-transformerlm-librispeech", savedir="pretrained_models/asr-transformer-transformerlm-librispeech", run_opts=run_opts)
-# asr_model = EncoderDecoderASR.from_hparams(source="speechbrain/asr-crdnn-commonvoice-14-en", savedir="pretrained_models/speechbrain/asr-crdnn-commonvoice-14-en", run_opts=run_opts)
+    Args:
+    audio_file (str): The audio file name.
+    transcriptions_df (DataFrame): DataFrame containing transcription data with 'ID' and 'Sentence' columns.
 
-print("-----------------")
-print("Loaded Model OK - Performing Transcription")
-print("-----------------")
+    Returns:
+    str: The corresponding transcription sentence for the given audio file.
+    """
+    # Extract the task ID from the audio file name
+    match = re.search(r"task(\d+)_", audio_file)
+    if match:
+        task_id = int(match.group(1))  # Convert the extracted ID to an integer
 
-# Start timing the transcription
-start_time = time.time()
+        # Find the corresponding transcription
+        transcription = transcriptions_df[transcriptions_df['ID'] == int(task_id)]['Sentence'].values
+        if transcription.size > 0:
+            return transcription[0]
 
-# Perform transcription
-transcription = asr_model.transcribe_file(file_path)
+    return "No matching transcription found"
 
-# End timing the transcription
-end_time = time.time()
+def calculate_recall_precision_fscore(hypothesis, reference):
+    """
+    Calculate Recall, Precision, and F-score for two lists of words.
 
-# Calculate transcription time and audio duration
-transcription_time = end_time - start_time
+    Args:
+    hypothesis (list): The predicted words.
+    reference (list): The ground truth words.
 
-audio_duration = len(waveform[0]) / sample_rate  # Calculate audio duration in seconds
+    Returns:
+    tuple: (recall, precision, f_score)
+    """
 
-# Calculate Real-Time Factor (RTF)
-rtf = transcription_time / audio_duration
+    # Count the occurrences of each word in both hypothesis and reference
+    hyp_count = Counter(hypothesis)
+    ref_count = Counter(reference)
 
-print("-----------------")
-print("Transcription Time:", transcription_time, "seconds")
-print("Audio Duration:", audio_duration, "seconds")
-print("Real Time Factor (RTF):", rtf)
-print(" ")
-print("Reference: " + reference)
-print(" ")
-print("Hypothesis: " + transcription)
+    # True Positives: Words in hypothesis that are also in reference, counted distinctly
+    true_positives = sum(min(hyp_count[word], ref_count[word]) for word in hyp_count)
 
-reference, hypothesis  = align_texts(reference=reference, hypothesis=transcription)
- 
+    # False Positives: Words in hypothesis not in reference
+    false_positives = sum(hyp_count[word] - min(hyp_count[word], ref_count[word]) for word in hyp_count)
 
-wer = calculate_wer2(ref_words=reference, hyp_words=hypothesis)
-wcr = 1 - wer
+    # False Negatives: Words in reference not in hypothesis
+    false_negatives = sum(ref_count[word] - min(hyp_count[word], ref_count[word]) for word in ref_count)
 
-print("-----------------")
-print("Word Error Rate (WER):", calculate_wer(ref_words=reference, hyp_words=hypothesis))
-print("Accurate Word Error Rate (AWER):", wer)
-print("Word Correct Rate (WCR):", wcr)
+    # Calculate precision and recall
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives > 0 else 0
+    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives > 0 else 0
 
-# Calculate Levenshtein Distance
-lev_distance = levenshtein_distance(" ".join(reference), " ".join(hypothesis))
-print("-----------------")
-print("Levenshtein Distance:", lev_distance)
+    # Calculate F-score
+    f_score = 2 * (precision * recall) / (precision + recall) if precision + recall > 0 else 0
 
-# Followed this https://www.askpython.com/python/examples/precision-and-recall-in-python
-# Calculate Recall, Precision, and F-score
-true_positives = sum(1 for word in hypothesis if word in reference)
-false_positives = len(hypothesis) - true_positives
-false_negatives = len(reference) - true_positives
+    return recall, precision, f_score
 
-precision = true_positives / (true_positives + false_positives)
-recall = true_positives / (true_positives + false_negatives)
+def ai_magic(current_directory,folder_name ,audio_file, reference):
 
-# Divide by zero fix
-if precision + recall != 0:
-    f_score = 2 * (precision * recall) / (precision + recall)
-else:
-    f_score = 0
+    path = os.path.join(current_directory, folder_name, audio_file)
 
-print("-----------------")
-print("Recall:", recall)
-print("Precision:", precision)
-print("F-score:", f_score)
+    waveform, sample_rate = torchaudio.load(path)
 
-# Define target words for which you want to calculate precision and recall
-target_words = ["that", "dream"]
+    # Run speech recognition on GPU
+    run_opts={"device":"cuda"}
 
-print("-----------------")
-print("Now performing calculations for the specified target words: ")
-
-# Calculate Recall and Precision for target words
-for word in target_words:
-    true_positives = sum(1 for w in hypothesis if w == word)
-    false_positives = len(hypothesis) - true_positives
-    false_negatives = hypothesis.count(word) - true_positives
-
-    recall = true_positives / (true_positives + false_negatives + 1e-9)  # Add a small epsilon to avoid division by zero
-    precision = true_positives / (true_positives + false_positives + 1e-9)
+    # Initialize the speech recognition model
+    asr_model = EncoderDecoderASR.from_hparams(source="speechbrain/asr-transformer-transformerlm-librispeech", savedir="pretrained_models/asr-transformer-transformerlm-librispeech", run_opts=run_opts)
+    # asr_model = EncoderDecoderASR.from_hparams(source="speechbrain/asr-crdnn-commonvoice-14-en", savedir="pretrained_models/speechbrain/asr-crdnn-commonvoice-14-en", run_opts=run_opts)
 
     print("-----------------")
-    print(f"Word: {word}")
+    print("Loaded Model OK - Performing Transcription on:   " + audio_file)
+    print("-----------------")
+
+    # Start timing the transcription
+    start_time = time.time()
+
+    # Perform transcription
+    transcription = asr_model.transcribe_file(path)
+
+    # End timing the transcription
+    end_time = time.time()
+
+    # Calculate transcription time and audio duration
+    transcription_time = end_time - start_time
+
+    audio_duration = len(waveform[0]) / sample_rate  # Calculate audio duration in seconds
+
+    # Calculate Real-Time Factor (RTF)
+    rtf = transcription_time / audio_duration
+
+    print("-----------------")
+    print("Transcription Time:", transcription_time, "seconds")
+    print("Audio Duration:", audio_duration, "seconds")
+    print("Real Time Factor (RTF):", rtf)
+    print(" ")
+    print("Reference: " + reference)
+    print(" ")
+    print("Hypothesis: " + transcription)
+
+    reference, hypothesis  = align_texts(reference=reference, hypothesis=transcription)
+    
+
+    wer = calculate_wer2(ref_words=reference, hyp_words=hypothesis)
+    wcr = 1 - wer
+
+    print("-----------------")
+    print("Word Error Rate (WER):", calculate_wer(ref_words=reference, hyp_words=hypothesis))
+    print("Accurate Word Error Rate (AWER):", wer)
+    print("Word Correct Rate (WCR):", wcr)
+
+    # Calculate Levenshtein Distance
+    lev_distance = levenshtein_distance(" ".join(reference), " ".join(hypothesis))
+    print("-----------------")
+    print("Levenshtein Distance:", lev_distance)
+
+    recall, precision, f_score = calculate_recall_precision_fscore(hypothesis=hypothesis, reference=reference)
+
+    print("-----------------")
     print("Recall:", recall)
     print("Precision:", precision)
+    print("F-score:", f_score)
+
+def calculate_for_word(target_words, hypothesis):
+    # Define target words for which you want to calculate precision and recall
+    # target_words = []
+
+    print("-----------------")
+    print("Now performing calculations for the specified target words: ")
+
+    # Calculate Recall and Precision for target words
+    for word in target_words:
+        true_positives = sum(1 for w in hypothesis if w == word)
+        false_positives = len(hypothesis) - true_positives
+        false_negatives = hypothesis.count(word) - true_positives
+
+        recall = true_positives / (true_positives + false_negatives + 1e-9)  # Add a small epsilon to avoid division by zero
+        precision = true_positives / (true_positives + false_positives + 1e-9)
+
+        print("-----------------")
+        print(f"Word: {word}")
+        print("Recall:", recall)
+        print("Precision:", precision)
+
+
+def mp3_to_wav():
+    # Check if the file is mp3
+    if file_path.endswith('.mp3'):
+        # Convert mp3 to wav
+        audio = AudioSegment.from_mp3(file_path)
+        # Change the file path to wav
+        file_path = file_path.replace('.mp3', '.wav')
+        # Export as wav
+        audio.export(file_path, format='wav')
+
+    # Load file in wav since we are windows
+    return torchaudio.load(file_path)
+
+reference_file_path = os.path.join(current_directory, reference_file)
+
+df_ref = load_transcriptions_from_excel(reference_file_path)
+audio_files = load_wav_files_from_folder(folder_path=os.path.join(current_directory, folder_name))
+
+for audio in audio_files:
+    reference = select_transcription_for_audio_file(audio_file=audio,transcriptions_df=df_ref)
+    ai_magic(current_directory=current_directory, folder_name=folder_name, audio_file=audio, reference=reference)
+
+

@@ -1,2 +1,4 @@
 # Ignore the pretrained_models folder
 pretrained_models/
+audio/
+audio_cache/
