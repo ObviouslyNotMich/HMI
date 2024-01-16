@@ -5,7 +5,7 @@ import cv2
 
 # ONLY WORKS WITH OPENCV 3.4.3!
 
-def resize_images_in_folder(folder_path, target_size=(48, 48)):
+def resize_images_in_folder(folder_path, target_size=(128, 128)):
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png')):

@@ -14,7 +14,6 @@ def read_annotations(annotations_path):
             annotations[image_path] = (x, y, width, height)
     return annotations
 
-
 def create_cropped_image_dirs(original_path, cropped_path):
     if os.path.exists(cropped_path):
         shutil.rmtree(cropped_path)  # Remove the directory if it already exists
@@ -27,7 +26,7 @@ def create_cropped_image_dirs(original_path, cropped_path):
             new_dirpath = os.path.join(cropped_path, relative_path)
             os.makedirs(new_dirpath)
 
-def get_images_and_labels(path, annotations, cropped_path, standard_size=(32, 32)):
+def get_images_and_labels(path, annotations, cropped_path, standard_size=(100, 100)):
     images = []
     labels = []
     label_dict = {}
@@ -45,19 +44,30 @@ def get_images_and_labels(path, annotations, cropped_path, standard_size=(32, 32
                 if img_path in annotations:
                     x, y, w, h = annotations[img_path]
                     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-                    if img is not None:
-                        face = img[y:y+h, x:x+w]  # Crop the face region
-                        resized_face = cv2.resize(face, standard_size)  # Resize the face
-                        images.append(resized_face)
-                        labels.append(label_dict[person_name])
 
-                        # Save the resized cropped image in the corresponding new directory
-                        relative_dir = os.path.relpath(dirname, path)
-                        cropped_img_path = os.path.join(cropped_path, relative_dir, filename)
-                        cv2.imwrite(cropped_img_path, resized_face)
+                    if img is None:
+                        print(f"Warning: Unable to read image at {img_path}")
+                        continue
+
+                    if y + h > img.shape[0] or x + w > img.shape[1]:
+                        print(f"Warning: Annotation for {img_path} is out of bounds.")
+                        continue
+
+                    face = img[y:y+h, x:x+w]
+                    if face.size == 0:
+                        print(f"Warning: No face detected in {img_path}")
+                        continue
+
+                    resized_face = cv2.resize(face, standard_size)
+                    images.append(resized_face)
+                    labels.append(label_dict[person_name])
+
+                    # Save the resized cropped image in the corresponding new directory
+                    relative_dir = os.path.relpath(dirname, path)
+                    cropped_img_path = os.path.join(cropped_path, relative_dir, filename)
+                    cv2.imwrite(cropped_img_path, resized_face)
 
     return images, np.array(labels)
-
 
 
 # Paths

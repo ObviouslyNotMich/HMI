@@ -2,7 +2,7 @@ import cv2
 
 # Path to the image and cascade file
 image_path = 'peeps_bunch.jpg'  # Replace with your image path
-cascade_path = 'classifier/cascade.xml'  # Replace with your cascade path
+cascade_path = 'F:\Code\HMIvoice\classifier\cascade.xml'  # Replace with your cascade path
 
 # Load the image
 image = cv2.imread(image_path)
