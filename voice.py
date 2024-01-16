@@ -5,6 +5,7 @@
 # pip install pydub
 # pip install numpy
 # ffmmpeg libs in os vars
+# pip install openpyxl
 
 import os
 import re
@@ -16,6 +17,7 @@ from pydub import AudioSegment
 import pandas as pd
 import numpy as np
 from collections import Counter
+from difflib import SequenceMatcher
 
 from speechbrain.pretrained import EncoderDecoderASR
 
@@ -101,19 +103,18 @@ def preprocess(text):
     text = re.sub(r"\s+", " ", text)
     return text
 
+def similar(a, b):
+    # Define a similarity threshold
+    threshold = 0.5
+    return SequenceMatcher(None, a, b).ratio() > threshold
+
+def find_best_alignment(current_word, other_words, look_ahead_limit=2):
+    for offset in range(1, min(look_ahead_limit + 1, len(other_words))):
+        if similar(current_word, other_words[offset]):
+            return offset
+    return 0
+
 def align_texts(reference, hypothesis):
-
-    """
-    Check the hypothesis and reference and then align the texts so that the wer can be calculated
-
-    Args:
-    hypothesis (list): The predicted words.
-    reference (list): The ground truth words.
-
-    Returns:
-    tuple: (align_ref, align_hyp)
-    """
-
     # Normalize reference and hypothesis texts
     reference = preprocess(reference)
     hypothesis = preprocess(hypothesis)
@@ -121,39 +122,52 @@ def align_texts(reference, hypothesis):
     reference_words = reference.split()
     hypothesis_words = hypothesis.split()
 
-    dp = [[0] * (len(hypothesis_words) + 1) for _ in range(len(reference_words) + 1)]
-    # Based on  Wagner-Fischer algorithm
-    for i in range(len(reference_words) + 1):
-        for j in range(len(hypothesis_words) + 1):
-            if i == 0:
-                dp[i][j] = j
-            elif j == 0:
-                dp[i][j] = i
-            elif reference_words[i - 1] == hypothesis_words[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1]
-            else:
-                dp[i][j] = 1 + min(dp[i - 1][j - 1], dp[i][j - 1], dp[i - 1][j])
+    align_ref, align_hyp = [], []
+    i, j = 0, 0
 
-    align_ref = []
-    align_hyp = []
-    i, j = len(reference_words), len(hypothesis_words)
-    while i > 0 or j > 0:
-        if i > 0 and j > 0 and reference_words[i - 1] == hypothesis_words[j - 1]:
-            align_ref.append(reference_words[i - 1])
-            align_hyp.append(hypothesis_words[j - 1])
-            i -= 1
-            j -= 1
-        elif j > 0 and (i == 0 or dp[i][j - 1] < dp[i - 1][j]):
-            align_ref.append("")
-            align_hyp.append(hypothesis_words[j - 1])
-            j -= 1
+    while i < len(reference_words) and j < len(hypothesis_words):
+        if reference_words[i] == hypothesis_words[j]:
+            align_ref.append(reference_words[i])
+            align_hyp.append(hypothesis_words[j])
+            i += 1
+            j += 1
+        elif similar(reference_words[i], hypothesis_words[j]):
+            align_ref.append(reference_words[i])
+            align_hyp.append(hypothesis_words[j])
+            i += 1
+            j += 1
         else:
-            align_ref.append(reference_words[i - 1])
-            align_hyp.append("")
-            i -= 1
+            ref_look_ahead = find_best_alignment(reference_words[i], hypothesis_words[j:], 3)
+            hyp_look_ahead = find_best_alignment(hypothesis_words[j], reference_words[i:], 3)
 
-    align_ref.reverse()
-    align_hyp.reverse()
+            if ref_look_ahead > 0:
+                align_ref.append("")
+                align_hyp.append(hypothesis_words[j])
+                j += 1
+            elif hyp_look_ahead > 0:
+                align_ref.append(reference_words[i])
+                align_hyp.append("")
+                i += 1
+            else:
+                align_ref.append(reference_words[i])
+                align_hyp.append("")
+                i += 1
+
+    # Handle remaining words in either list
+    while i < len(reference_words):
+        align_ref.append(reference_words[i])
+        align_hyp.append("")
+        i += 1
+
+    while j < len(hypothesis_words):
+        align_ref.append("")
+        align_hyp.append(hypothesis_words[j])
+        j += 1
+
+    # Printing aligned words side by side for visual confirmation
+    print("align_ref - align_hyp")
+    for ref, hyp in zip(align_ref, align_hyp):
+        print(f"{ref.ljust(15)} - {hyp}")
 
     return align_ref, align_hyp
 
@@ -196,6 +210,7 @@ def load_transcriptions_from_excel(excel_path):
 
         return df
     except Exception as e:
+        print(e)
         return f"An error occurred: {e}"
 
 def select_transcription_for_audio_file(audio_file, transcriptions_df):
@@ -215,43 +230,45 @@ def select_transcription_for_audio_file(audio_file, transcriptions_df):
         task_id = int(match.group(1))  # Convert the extracted ID to an integer
 
         # Find the corresponding transcription
-        transcription = transcriptions_df[transcriptions_df['ID'] == int(task_id)]['Sentence'].values
+        transcription = transcriptions_df[transcriptions_df['ID'] == task_id]['Sentence'].values
         if transcription.size > 0:
             return transcription[0]
 
     return "No matching transcription found"
 
 def calculate_recall_precision_fscore(hypothesis, reference):
-    """
-    Calculate Recall, Precision, and F-score for two lists of words.
-
-    Args:
-    hypothesis (list): The predicted words.
-    reference (list): The ground truth words.
-
-    Returns:
-    tuple: (recall, precision, f_score)
-    """
-
-    # Count the occurrences of each word in both hypothesis and reference
+    # Count occurrences in both lists
     hyp_count = Counter(hypothesis)
     ref_count = Counter(reference)
 
-    # True Positives: Words in hypothesis that are also in reference, counted distinctly
-    true_positives = sum(min(hyp_count[word], ref_count[word]) for word in hyp_count)
+    # Calculate true positives (words in both hypothesis and reference)
+    true_positives = 0
 
-    # False Positives: Words in hypothesis not in reference
-    false_positives = sum(hyp_count[word] - min(hyp_count[word], ref_count[word]) for word in hyp_count)
+    for index, element in enumerate(hypothesis):
+        if hypothesis[index] == reference[index]:
+            true_positives += 1
 
-    # False Negatives: Words in reference not in hypothesis
-    false_negatives = sum(ref_count[word] - min(hyp_count[word], ref_count[word]) for word in ref_count)
+    # Exclude empty strings from the hypothesis count
+    if "" in hyp_count:
+        del hyp_count[""]
+
+    # Exclude empty strings from the reference count
+    if "" in ref_count:
+        del ref_count[""]
+
+    # Calculate total number of predicted and actual words
+    total_predicted = sum(hyp_count.values())
+    total_actual = sum(ref_count.values())
 
     # Calculate precision and recall
-    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives > 0 else 0
-    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives > 0 else 0
+    precision = true_positives / total_predicted if total_predicted > 0 else 0
+    recall = true_positives / total_actual if total_actual > 0 else 0
 
     # Calculate F-score
-    f_score = 2 * (precision * recall) / (precision + recall) if precision + recall > 0 else 0
+    if recall + precision > 0:
+        f_score = 2 * (precision * recall) / (precision + recall)
+    else:
+        f_score = 0
 
     return recall, precision, f_score
 
@@ -301,7 +318,7 @@ def ai_magic(current_directory,folder_name ,audio_file, reference):
     reference, hypothesis  = align_texts(reference=reference, hypothesis=transcription)
     
 
-    wer = calculate_wer2(ref_words=reference, hyp_words=hypothesis)
+    wer = float(calculate_wer2(ref_words=reference, hyp_words=hypothesis))
     wcr = 1 - wer
 
     print("-----------------")
@@ -321,26 +338,40 @@ def ai_magic(current_directory,folder_name ,audio_file, reference):
     print("Precision:", precision)
     print("F-score:", f_score)
 
-def calculate_for_word(target_words, hypothesis):
-    # Define target words for which you want to calculate precision and recall
-    # target_words = []
-
+def calculate_for_word(target_words, hypothesis, reference):
     print("-----------------")
     print("Now performing calculations for the specified target words: ")
 
-    # Calculate Recall and Precision for target words
-    for word in target_words:
-        true_positives = sum(1 for w in hypothesis if w == word)
-        false_positives = len(hypothesis) - true_positives
-        false_negatives = hypothesis.count(word) - true_positives
+    hyp_count = Counter(hypothesis)
+    ref_count = Counter(reference)
 
-        recall = true_positives / (true_positives + false_negatives + 1e-9)  # Add a small epsilon to avoid division by zero
-        precision = true_positives / (true_positives + false_positives + 1e-9)
+    for word in target_words:
+        tp = 0
+        for index, element in enumerate(hypothesis):
+            if element == word and hypothesis[index] == reference[index]:
+              tp += 1
+
+
+        word_hyp_count = hyp_count[word]
+        word_ref_count = ref_count[word]
+
+        # Recall for the word
+        recall = tp / word_ref_count if word_ref_count > 0 else 0
+
+        # Precision for the word
+        precision = tp / word_hyp_count if word_hyp_count > 0 else 0
+
+        # F-score for the word
+        if recall + precision > 0:
+            f_score = 2 * (precision * recall) / (precision + recall)
+        else:
+            f_score = 0
 
         print("-----------------")
         print(f"Word: {word}")
         print("Recall:", recall)
         print("Precision:", precision)
+        print("F-score:", f_score)
 
 
 def mp3_to_wav():
@@ -356,13 +387,54 @@ def mp3_to_wav():
     # Load file in wav since we are windows
     return torchaudio.load(file_path)
 
-reference_file_path = os.path.join(current_directory, reference_file)
 
-df_ref = load_transcriptions_from_excel(reference_file_path)
-audio_files = load_wav_files_from_folder(folder_path=os.path.join(current_directory, folder_name))
+def fake_it(reference, hypothesis):
+    print("-----------------")
+    print("Reference: " + reference)
+    print(" ")
+    print("Hypothesis: " + hypothesis)
 
-for audio in audio_files:
-    reference = select_transcription_for_audio_file(audio_file=audio,transcriptions_df=df_ref)
-    ai_magic(current_directory=current_directory, folder_name=folder_name, audio_file=audio, reference=reference)
+    reference, hypothesis  = align_texts(reference=reference, hypothesis=hypothesis)
+    
+
+    wer = calculate_wer2(ref_words=reference, hyp_words=hypothesis)
+    wcr = 1 - wer
+
+    print("-----------------")
+    print("Word Error Rate (WER):", calculate_wer(ref_words=reference, hyp_words=hypothesis))
+    print("Accurate Word Error Rate (AWER):", wer)
+    print("Word Correct Rate (WCR):", wcr)
+
+    # Calculate Levenshtein Distance
+    lev_distance = levenshtein_distance(" ".join(reference), " ".join(hypothesis))
+    print("-----------------")
+    print("Levenshtein Distance:", lev_distance)
 
 
+    calculate_for_word(hypothesis=hypothesis, reference=reference, target_words=["the"])
+    
+    recall, precision, f_score = calculate_recall_precision_fscore(hypothesis=hypothesis, reference=reference)
+
+    print("-----------------")
+    print("Macro Recall:", recall)
+    print("Macro Precision:", precision)
+    print("Macro F-score:", f_score)
+
+
+fake_ref = "Additionally, our innovative pipeline includes more than twenty active development programs for blood cancers and solid tumors, which we expect will strengthen our growing position in oncology."
+fake_hypo = "Addition ally, or innovative pipeline includes more than twenty active develop mint programs for blood cancers solid tumors, which we will strengthen our glowing positioning oncology"
+pp_ref = "The cat sat on the mat at the door"
+pp_hypo = "She rat the sat the mat at door"
+
+
+fake_it(reference=pp_ref, hypothesis=pp_hypo)
+
+# reference_file_path = os.path.join(current_directory, reference_file)
+
+# df_ref = load_transcriptions_from_excel(reference_file_path)
+# audio_files = load_wav_files_from_folder(folder_path=os.path.join(current_directory, folder_name))
+
+# for audio in audio_files:
+#     reference = select_transcription_for_audio_file(audio_file=audio,transcriptions_df=df_ref)
+#     ai_magic(current_directory=current_directory, folder_name=folder_name, audio_file=audio, reference=reference)
+#     torch.cuda.empty_cache()
