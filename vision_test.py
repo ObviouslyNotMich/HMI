@@ -37,10 +37,11 @@ while True:
 
     for (x, y, w, h) in faces:
         face = gray[y:y+h, x:x+w]
-        face_resized = cv2.resize(face, (48, 48))
+        face_resized = cv2.resize(face, (100, 100))
 
         label, confidence = model.predict(face_resized)
-        if confidence < 3000:
+        print(confidence)
+        if confidence < 5400:
             text = f"Person {label}"
         else:
             text = "Unknown"
