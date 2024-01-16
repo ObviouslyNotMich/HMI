@@ -411,7 +411,7 @@ def fake_it(reference, hypothesis):
     print("Levenshtein Distance:", lev_distance)
 
 
-    calculate_for_word(hypothesis=hypothesis, reference=reference, target_words=["the"])
+    calculate_for_word(hypothesis=hypothesis, reference=reference, target_words=["our"])
     
     recall, precision, f_score = calculate_recall_precision_fscore(hypothesis=hypothesis, reference=reference)
 
@@ -427,7 +427,7 @@ pp_ref = "The cat sat on the mat at the door"
 pp_hypo = "She rat the sat the mat at door"
 
 
-fake_it(reference=pp_ref, hypothesis=pp_hypo)
+fake_it(reference=fake_ref, hypothesis=fake_hypo)
 
 # reference_file_path = os.path.join(current_directory, reference_file)
 

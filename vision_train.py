@@ -5,7 +5,7 @@ import cv2
 
 # ONLY WORKS WITH OPENCV 3.4.3!
 
-def resize_images_in_folder(folder_path, target_size=(140, 140)):
+def resize_images_in_folder(folder_path, target_size=(48, 48)):
     for root, dirs, files in os.walk(folder_path):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -38,12 +38,12 @@ def generate_negative_description_file(negative_images_folder, output_file='nega
 
 def create_samples():
     # Replace with the full path to opencv_createsamples if it's not in PATH
-    command = "opencv_createsamples -info positives.txt -num 357 -w 140 -h 140 -vec positives.vec"
+    command = "opencv_createsamples -info positives.txt -num 357 -w 48 -h 48 -vec positives.vec"
     subprocess.run(command, shell=True)
 
 def train_classifier():
     # Replace with the full path to opencv_traincascade if it's not in PATH
-    command = "opencv_traincascade -data classifier -vec positives.vec -bg negatives.txt -numPos 320 -numNeg 32 -numStages 20 -w 140 -h 140 -numThreads 16"
+    command = "opencv_traincascade -data classifier -vec positives.vec -bg negatives.txt -numPos 340 -numNeg 32 -numStages 15 -w 48 -h 48 -numThreads 16"
 
     subprocess.run(command, shell=True)
 
