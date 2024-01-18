@@ -293,7 +293,7 @@ def ai_magic(current_directory,folder_name ,audio_file, reference):
     start_time = time.time()
 
     # Perform transcription
-    transcription = asr_model.transcribe_file(path)
+    hypothesis = asr_model.transcribe_file(path)
 
     # End timing the transcription
     end_time = time.time()
@@ -310,33 +310,8 @@ def ai_magic(current_directory,folder_name ,audio_file, reference):
     print("Transcription Time:", transcription_time, "seconds")
     print("Audio Duration:", audio_duration, "seconds")
     print("Real Time Factor (RTF):", rtf)
-    print(" ")
-    print("Reference: " + reference)
-    print(" ")
-    print("Hypothesis: " + transcription)
-
-    reference, hypothesis  = align_texts(reference=reference, hypothesis=transcription)
     
-
-    wer = float(calculate_wer2(ref_words=reference, hyp_words=hypothesis))
-    wcr = 1 - wer
-
-    print("-----------------")
-    print("Word Error Rate (WER):", calculate_wer(ref_words=reference, hyp_words=hypothesis))
-    print("Accurate Word Error Rate (AWER):", wer)
-    print("Word Correct Rate (WCR):", wcr)
-
-    # Calculate Levenshtein Distance
-    lev_distance = levenshtein_distance(" ".join(reference), " ".join(hypothesis))
-    print("-----------------")
-    print("Levenshtein Distance:", lev_distance)
-
-    recall, precision, f_score = calculate_recall_precision_fscore(hypothesis=hypothesis, reference=reference)
-
-    print("-----------------")
-    print("Recall:", recall)
-    print("Precision:", precision)
-    print("F-score:", f_score)
+    output(reference=reference, hypothesis=hypothesis)
 
 def calculate_for_word(target_words, hypothesis, reference):
     print("-----------------")
@@ -388,7 +363,7 @@ def mp3_to_wav():
     return torchaudio.load(file_path)
 
 
-def fake_it(reference, hypothesis):
+def output(reference, hypothesis):
     print("-----------------")
     print("Reference: " + reference)
     print(" ")
@@ -427,7 +402,7 @@ pp_ref = "The cat sat on the mat at the door"
 pp_hypo = "She rat the sat the mat at door"
 
 
-fake_it(reference=pp_ref, hypothesis=pp_hypo)
+output(reference=pp_ref, hypothesis=pp_hypo)
 
 # reference_file_path = os.path.join(current_directory, reference_file)
 
