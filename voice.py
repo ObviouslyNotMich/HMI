@@ -105,10 +105,10 @@ def preprocess(text):
 
 def similar(a, b):
     # Define a similarity threshold
-    threshold = 0.5
+    threshold = 0.6
     return SequenceMatcher(None, a, b).ratio() > threshold
 
-def find_best_alignment(current_word, other_words, look_ahead_limit=2):
+def find_best_alignment(current_word, other_words, look_ahead_limit=3):
     for offset in range(1, min(look_ahead_limit + 1, len(other_words))):
         if similar(current_word, other_words[offset]):
             return offset
@@ -225,7 +225,7 @@ def select_transcription_for_audio_file(audio_file, transcriptions_df):
     str: The corresponding transcription sentence for the given audio file.
     """
     # Extract the task ID from the audio file name
-    match = re.search(r"task(\d+)_", audio_file)
+    match = re.search(r"task(\d+)", audio_file)
     if match:
         task_id = int(match.group(1))  # Convert the extracted ID to an integer
 
@@ -402,14 +402,14 @@ pp_ref = "The cat sat on the mat at the door"
 pp_hypo = "She rat the sat the mat at door"
 
 
-output(reference=pp_ref, hypothesis=pp_hypo)
+# output(reference=fake_ref, hypothesis=fake_hypo)
 
-# reference_file_path = os.path.join(current_directory, reference_file)
+reference_file_path = os.path.join(current_directory, reference_file)
 
-# df_ref = load_transcriptions_from_excel(reference_file_path)
-# audio_files = load_wav_files_from_folder(folder_path=os.path.join(current_directory, folder_name))
+df_ref = load_transcriptions_from_excel(reference_file_path)
+audio_files = load_wav_files_from_folder(folder_path=os.path.join(current_directory, folder_name))
 
-# for audio in audio_files:
-#     reference = select_transcription_for_audio_file(audio_file=audio,transcriptions_df=df_ref)
-#     ai_magic(current_directory=current_directory, folder_name=folder_name, audio_file=audio, reference=reference)
-#     torch.cuda.empty_cache()
+for audio in audio_files:
+    reference = select_transcription_for_audio_file(audio_file=audio,transcriptions_df=df_ref)
+    ai_magic(current_directory=current_directory, folder_name=folder_name, audio_file=audio, reference=reference)
+    torch.cuda.empty_cache()
